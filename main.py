@@ -97,6 +97,8 @@ class UltraThicknessApp:
         self.model = KNeighborsRegressor(n_neighbors=3, weights='distance')
         self.ui_elements = {}
         self.current_mode_key = None 
+        self.crosshair_move_cid = None
+        self.crosshair_click_cid = None
         self.setup_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
@@ -225,6 +227,7 @@ class UltraThicknessApp:
         self.canvas_cal.draw()
 
     def init_db(self):
+        self.disable_crosshair_query()
         path = filedialog.asksaveasfilename(defaultextension=".csv")
         if path:
             self.db_path = path
@@ -257,6 +260,7 @@ class UltraThicknessApp:
     def load_img_measure(self): self.load_img_gen("analysis")
 
     def load_img_gen(self, mode_key):
+        self.disable_crosshair_query()
         path = filedialog.askopenfilename()
         if path:
             self.current_img = cv2.imread(path).astype(np.float32)
@@ -268,6 +272,7 @@ class UltraThicknessApp:
             self.update_info(f"{self.translations[self.lang][mode_key]}{self.translations[self.lang]['img_loaded']}{self.img_name}")
 
     def set_sub_study(self):
+        self.disable_crosshair_query()
         messagebox.showinfo(self.translations[self.lang]["calib_title"], self.translations[self.lang]["calib_msg"])
         def onclick(event):
             if event.xdata:
@@ -281,6 +286,7 @@ class UltraThicknessApp:
         cid = self.fig_main.canvas.mpl_connect('button_press_event', onclick)
 
     def add_point(self):
+        self.disable_crosshair_query()
         def onclick(event):
             if event.xdata:
                 rgb_cal = self.get_calibrated_rgb(self.current_img[int(event.ydata), int(event.xdata)])
@@ -299,6 +305,7 @@ class UltraThicknessApp:
         cid = self.fig_main.canvas.mpl_connect('button_press_event', onclick)
 
     def set_sub_measure(self):
+        self.disable_crosshair_query()
         def onclick(event):
             if event.xdata:
                 roi = self.current_img[int(event.ydata)-5:int(event.ydata)+5, int(event.xdata)-5:int(event.xdata)+5]
@@ -308,6 +315,7 @@ class UltraThicknessApp:
         cid = self.fig_main.canvas.mpl_connect('button_press_event', onclick)
 
     def set_electrode_measure(self):
+        self.disable_crosshair_query()
         messagebox.showinfo(self.translations[self.lang]["calib_title"], self.translations[self.lang]["calib_elec_msg"])
         def onclick(event):
             if event.xdata:
@@ -331,6 +339,7 @@ class UltraThicknessApp:
         return mask
 
     def auto_avg_height(self):
+        self.disable_crosshair_query()
         mask = self.generate_mask()
         if mask is None: return
         sample_pixels = self.current_img[mask]
@@ -348,6 +357,7 @@ class UltraThicknessApp:
 
     def generate_heatmap(self):
         """弹出独立的高度热力图窗口"""
+        self.disable_crosshair_query()
         if self.current_img is None or len(self.calib_df) < 3: return
         mask = self.generate_mask()
         if mask is None: return
@@ -378,10 +388,17 @@ class UltraThicknessApp:
         plt.show()
 
     def enable_crosshair_query(self):
+        # 先清理旧的绑定，避免重复叠加
+        self.disable_crosshair_query()
+        
         def onmove(event):
             if event.inaxes == self.ax_main:
-                if hasattr(self, 'h_line'): self.h_line.remove()
-                if hasattr(self, 'v_line'): self.v_line.remove()
+                if hasattr(self, 'h_line'): 
+                    try: self.h_line.remove()
+                    except: pass
+                if hasattr(self, 'v_line'): 
+                    try: self.v_line.remove()
+                    except: pass
                 self.h_line = self.ax_main.axhline(y=event.ydata, color='red', lw=0.5, alpha=0.8)
                 self.v_line = self.ax_main.axvline(x=event.xdata, color='red', lw=0.5, alpha=0.8)
                 self.canvas_main.draw_idle()
@@ -391,8 +408,29 @@ class UltraThicknessApp:
                 pred = self.model.predict([rgb_cal])[0]
                 self.ax_main.text(event.xdata, event.ydata, f" {pred:.1f}nm", color='white', bbox=dict(facecolor='red', alpha=0.6))
                 self.canvas_main.draw()
-        self.fig_main.canvas.mpl_connect('motion_notify_event', onmove)
-        self.fig_main.canvas.mpl_connect('button_press_event', onclick)
+        
+        self.crosshair_move_cid = self.fig_main.canvas.mpl_connect('motion_notify_event', onmove)
+        self.crosshair_click_cid = self.fig_main.canvas.mpl_connect('button_press_event', onclick)
+
+    def disable_crosshair_query(self):
+        """取消实时十字准心显示并移除绑定"""
+        if self.crosshair_move_cid is not None:
+            self.fig_main.canvas.mpl_disconnect(self.crosshair_move_cid)
+            self.crosshair_move_cid = None
+        if self.crosshair_click_cid is not None:
+            self.fig_main.canvas.mpl_disconnect(self.crosshair_click_cid)
+            self.crosshair_click_cid = None
+        
+        # 移除十字线
+        if hasattr(self, 'h_line'): 
+            try: self.h_line.remove()
+            except: pass
+            del self.h_line
+        if hasattr(self, 'v_line'): 
+            try: self.v_line.remove()
+            except: pass
+            del self.v_line
+        self.canvas_main.draw_idle()
 
     def refresh_main_view(self):
         self.ax_main.clear()
